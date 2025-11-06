@@ -1,6 +1,6 @@
 before_install:
-  - sdk install java 17.0.12-tem  # Temurin JDK 17 (stable, widely used)
-  - sdk use java 17.0.12-tem      # Switch to it for the build
+  - sdk install java 17.0.10-tem
+  - sdk use java 17.0.10-tem
 
 install:
-  - mvn install -DskipTests        # Runs your default build (optional, but ensures consistency)
+  - mvn install -DskipTests  # Optional: Pre-runs your build for consistency
