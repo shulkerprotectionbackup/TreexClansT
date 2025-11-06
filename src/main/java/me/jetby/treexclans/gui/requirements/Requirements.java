@@ -5,19 +5,10 @@ import me.clip.placeholderapi.PlaceholderAPI;
 import me.jetby.treex.text.Papi;
 import org.bukkit.entity.Player;
 
-
 @UtilityClass
 public class Requirements {
 
-    public boolean check(Player player, SimpleRequirement req) {
-        return checkInternal(player, req.type(), req.permission(), req.input(), req.output());
-    }
-
-    public boolean check(Player player, ViewRequirement req) {
-        return checkInternal(player, req.type(), req.permission(), req.input(), req.output());
-    }
-
-    public boolean check(Player player, ClickRequirement req) {
+    public boolean check(Player player, Requirement req) {
         return checkInternal(player, req.type(), req.permission(), req.input(), req.output());
     }
 
