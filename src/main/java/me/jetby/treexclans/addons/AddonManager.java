@@ -18,13 +18,6 @@ import java.util.stream.Collectors;
 
 import static me.jetby.treexclans.TreexClans.LOGGER;
 
-/**
- * Менеджер загрузки аддонов TreexClans.
- * <p>
- * Работает с JAR-файлами, содержащими классы, аннотированные {@link TreexAddonInfo}.
- * Поддерживает автоматическую инициализацию, включение и выгрузку аддонов.
- * </p>
- */
 public final class AddonManager {
 
     private final TreexClans plugin;
@@ -47,7 +40,7 @@ public final class AddonManager {
     }
 
     /**
-     * Загружает все JAR-аддоны из папки {@code /addons}.
+     * Загружает все JAR-аддоны из папки /addons.
      */
     public void loadAddons() {
         File[] jars = addonsFolder.listFiles((dir, name) -> name.endsWith(".jar"));
@@ -57,19 +50,19 @@ public final class AddonManager {
         }
 
         LOGGER.success("------------------------");
-        LOGGER.info("Loading " + jars.length + " addon(s)...");
+        LOGGER.info("Scanning " + jars.length + " addon(s) in folder: " + addonsFolder.getAbsolutePath());
         LOGGER.success("------------------------");
 
         for (File jarFile : jars) {
+            LOGGER.info("→ Found addon file: " + jarFile.getName() + " (" + jarFile.length() + " bytes)");
             try {
                 loadFromJar(jarFile);
-            } catch (Exception e) {
-                LOGGER.error("Failed to load addon: " + jarFile.getName());
+            } catch (Throwable e) {
+                LOGGER.error("❌ Failed to load addon from " + jarFile.getName() + ": " + e.getClass().getSimpleName() + " — " + e.getMessage());
                 e.printStackTrace();
             }
         }
 
-        // Включаем по зависимостям
         enableAll();
 
         LOGGER.success("------------------------");
@@ -78,16 +71,17 @@ public final class AddonManager {
     }
 
     /**
-     * Загружает один JAR-файл и ищет в нём аннотированный класс {@link TreexAddonInfo}.
+     * Загружает один JAR и ищет аннотированный класс TreexAddonInfo.
      */
     private void loadFromJar(File jarFile) throws Exception {
+        LOGGER.info("↳ Opening JAR: " + jarFile.getName());
+
         URLClassLoader loader = new URLClassLoader(
                 new URL[]{jarFile.toURI().toURL()},
                 plugin.getClass().getClassLoader()
         );
 
-        String jarName = jarFile.getName();
-        classLoaders.put(jarName, loader);
+        classLoaders.put(jarFile.getName(), loader);
 
         List<Class<?>> classes;
         try (JarFile jar = new JarFile(jarFile)) {
@@ -96,8 +90,11 @@ public final class AddonManager {
                     .map(e -> e.getName().replace('/', '.').replace(".class", ""))
                     .map(name -> {
                         try {
-                            return loader.loadClass(name);
-                        } catch (Throwable ignored) {
+                            Class<?> c = loader.loadClass(name);
+                            LOGGER.info("  ↳ Loaded class: " + name);
+                            return c;
+                        } catch (Throwable t) {
+                            LOGGER.warn("  ⚠️  Failed to load class " + name + " (" + t.getClass().getSimpleName() + ": " + t.getMessage() + ")");
                             return null;
                         }
                     })
@@ -105,12 +102,22 @@ public final class AddonManager {
                     .collect(Collectors.toList());
         }
 
+        LOGGER.info("↳ Total classes scanned: " + classes.size());
+
+        boolean foundAny = false;
         for (Class<?> clazz : classes) {
             TreexAddonInfo meta = clazz.getAnnotation(TreexAddonInfo.class);
-            if (meta == null) continue;
+            if (meta == null) {
+                LOGGER.info("  ⤷ Skipping " + clazz.getName() + " (no @TreexAddonInfo)");
+                continue;
+            }
+
+            foundAny = true;
+            LOGGER.success("  ⤷ Found addon class: " + clazz.getName());
+            LOGGER.success("     ↳ id=" + meta.id() + ", version=" + meta.version());
 
             if (!TreexAddon.class.isAssignableFrom(clazz)) {
-                LOGGER.warn("Class " + clazz.getName() + " has @TreexAddonInfo but does not extend TreexAddon!");
+                LOGGER.warn("  ⚠️  Class " + clazz.getName() + " has @TreexAddonInfo but does not extend TreexAddon!");
                 continue;
             }
 
@@ -118,67 +125,84 @@ public final class AddonManager {
             addon.initialize(new AddonContext(plugin, logger, addonsFolder, loadedAddons::get));
 
             loadedAddons.put(meta.id(), addon);
-            LOGGER.success("Registered addon: " + meta.id() + " v" + meta.version());
+            LOGGER.success("✅ Registered addon: " + meta.id() + " v" + meta.version());
+        }
+
+        if (!foundAny) {
+            LOGGER.warn("⚠️  No classes with @TreexAddonInfo found in " + jarFile.getName());
         }
     }
 
-    /**
-     * Включает все зарегистрированные аддоны с учётом зависимостей.
-     */
     private void enableAll() {
         List<TreexAddon> ordered = sortByDependencies();
+        LOGGER.info("↳ Enabling addons in dependency order (" + ordered.size() + " total)");
 
         for (TreexAddon addon : ordered) {
             TreexAddonInfo info = addon.getInfo();
 
-            if (!checkDependencies(info.depends())) {
-                LOGGER.error("Skipping " + info.id() + " — missing dependencies.");
+            if (!checkDependencies(info)) {
+                LOGGER.error("⛔ Skipping " + info.id() + " — missing or incompatible dependencies.");
                 continue;
             }
 
-            addon.onEnable();
-            LOGGER.success("Enabled addon: " + info.id() + " v" + info.version());
+            try {
+                addon.onEnable();
+                LOGGER.success("✅ Enabled addon: " + info.id() + " v" + info.version());
+            } catch (Throwable e) {
+                LOGGER.error("❌ Exception while enabling " + info.id() + ": " + e.getMessage());
+                e.printStackTrace();
+            }
         }
     }
 
-    /**
-     * Выгружает все аддоны и закрывает загрузчики.
-     */
     public void unloadAll() {
+        LOGGER.info("↳ Unloading all addons (" + loadedAddons.size() + ")");
         List<TreexAddon> reversed = new ArrayList<>(loadedAddons.values());
         Collections.reverse(reversed);
 
         for (TreexAddon addon : reversed) {
             try {
                 addon.onDisable();
-                LOGGER.info("Addon disabled: " + addon.getInfo().id());
-            } catch (Exception e) {
-                LOGGER.error("Error disabling addon: " + addon.getInfo().id());
-                e.printStackTrace();
+                LOGGER.info("🟡 Disabled addon: " + addon.getInfo().id());
+            } catch (Throwable e) {
+                LOGGER.error("❌ Error disabling " + addon.getInfo().id() + ": " + e.getMessage());
             }
         }
 
         loadedAddons.clear();
-        for (URLClassLoader loader : classLoaders.values()) {
+        for (Map.Entry<String, URLClassLoader> entry : classLoaders.entrySet()) {
             try {
-                loader.close();
+                entry.getValue().close();
+                LOGGER.info("Closed classloader for " + entry.getKey());
             } catch (IOException ignored) {}
         }
         classLoaders.clear();
     }
 
-    private boolean checkDependencies(Dependency[] deps) {
-        for (Dependency dep : deps) {
+    private boolean checkDependencies(TreexAddonInfo info) {
+        boolean ok = true;
+        for (Dependency dep : info.depends()) {
             TreexAddon found = loadedAddons.get(dep.id());
-            if (found == null) return false;
-            if (!VersionUtil.isSatisfied(found.getVersion(), dep.version())) return false;
+            if (found == null) {
+                LOGGER.error("❌ Missing dependency for " + info.id() + ": " + dep.id() + " (required ≥ " + dep.version() + ")");
+                ok = false;
+                continue;
+            }
+
+            String actual = found.getInfo().version();
+            if (!VersionUtil.isSatisfied(actual, dep.version())) {
+                LOGGER.error("❌ Incompatible dependency for " + info.id() + ": "
+                        + dep.id() + " (required ≥ " + dep.version() + ", found " + actual + ")");
+                ok = false;
+            }
         }
-        return true;
+        return ok;
     }
 
     private List<TreexAddon> sortByDependencies() {
         Map<String, Set<String>> graph = new HashMap<>();
-        for (TreexAddon a : loadedAddons.values()) graph.put(a.getInfo().id(), new LinkedHashSet<>());
+        for (TreexAddon a : loadedAddons.values())
+            graph.put(a.getInfo().id(), new LinkedHashSet<>());
 
         for (TreexAddon a : loadedAddons.values()) {
             TreexAddonInfo info = a.getInfo();
@@ -196,6 +220,7 @@ public final class AddonManager {
                 if (graph.containsKey(before)) graph.get(before).add(info.id());
         }
 
+        LOGGER.info("↳ Built dependency graph: " + graph);
         return topologicalSort(graph);
     }
 
@@ -203,7 +228,7 @@ public final class AddonManager {
         Map<String, Integer> indeg = new HashMap<>();
         for (String k : graph.keySet()) indeg.put(k, 0);
         for (Set<String> v : graph.values())
-            for (String d : v) indeg.put(d, indeg.get(d) + 1);
+            for (String d : v) indeg.put(d, indeg.getOrDefault(d, 0) + 1);
 
         Deque<String> q = new ArrayDeque<>();
         indeg.forEach((k, v) -> { if (v == 0) q.add(k); });
@@ -214,11 +239,13 @@ public final class AddonManager {
             TreexAddon addon = loadedAddons.get(id);
             if (addon != null) result.add(addon);
 
-            for (String to : graph.get(id)) {
+            for (String to : graph.getOrDefault(id, Collections.emptySet())) {
                 indeg.put(to, indeg.get(to) - 1);
                 if (indeg.get(to) == 0) q.addLast(to);
             }
         }
+
+        LOGGER.info("↳ Topological order: " + result.stream().map(a -> a.getInfo().id()).toList());
         return result;
     }
 }

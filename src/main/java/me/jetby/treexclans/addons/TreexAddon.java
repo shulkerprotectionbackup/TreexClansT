@@ -17,10 +17,6 @@ public abstract class TreexAddon {
     private TreexAddonInfo info;
     protected TreexClans plugin;
     protected File dataFolder;
-    protected String name;
-    protected String author;
-    protected String version;
-    protected String description;
     private Logger logger;
 
     public final void initialize(@NotNull AddonContext context) {
@@ -29,16 +25,26 @@ public abstract class TreexAddon {
         if (info == null)
             throw new IllegalStateException("Класс " + getClass().getName() + " не имеет аннотации @TreexAddonInfo");
 
-        this.logger = context.logger();
+        Logger parent = plugin.getLogger();
+        this.logger = new Logger("AddonLogger-" + info.id(), null) {
+            @Override
+            public void log(java.util.logging.Level level, String msg) {
+                String prefix = "[" + info.id() + "] ";
+                parent.log(level, prefix + msg);
+            }
+
+            @Override
+            public void log(java.util.logging.Level level, String msg, Throwable thrown) {
+                String prefix = "[" + info.id() + "] ";
+                parent.log(level, prefix + msg, thrown);
+            }
+        };
         this.dataFolder = new File(context.plugin().getDataFolder(), "addons/" + info.id());
         if (!dataFolder.exists()) dataFolder.mkdirs();
     }
 
     public abstract void onEnable();
-
-
     public abstract void onDisable();
-
 
     public TreexClans getClansPlugin() {
         return plugin;
